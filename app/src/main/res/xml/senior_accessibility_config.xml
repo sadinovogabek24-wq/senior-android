@@ -6,5 +6,5 @@
     android:accessibilityFlags="flagDefault|flagReportViewIds"
     android:canRetrieveWindowContent="true"
     android:canPerformGestures="true"
-    android:description="@string/senior_accessibility_description"
+    android:description="SENIOR telefonni ovoz bilan boshqaradi"
     android:notificationTimeout="100" />
