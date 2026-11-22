@@ -3,145 +3,196 @@ package com.senior.assistant
 
 import android.app.Activity
 import android.os.Bundle
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
-import android.speech.RecognitionListener
-import android.widget.LinearLayout
-import android.widget.TextView
-import android.widget.Button
 import android.graphics.Color
 import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.*
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.io.OutputStreamWriter
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
 
-    private var recognizer: SpeechRecognizer? = null
-    private lateinit var resultText: TextView
+    private val serverUrl =
+        "https://senior-ai.sadinovogabek24.workers.dev/chat"
+
+    private val executor = Executors.newSingleThreadExecutor()
+    private val history = JSONArray()
+
+    private lateinit var chatText: TextView
+    private lateinit var input: EditText
+    private lateinit var sendButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(30, 30, 30, 30)
+            setPadding(24, 24, 24, 24)
             setBackgroundColor(Color.rgb(10, 15, 30))
         }
 
         val title = TextView(this).apply {
             text = "SENIOR"
-            textSize = 38f
-            setTextColor(Color.CYAN)
+            textSize = 32f
             gravity = Gravity.CENTER
+            setTextColor(Color.CYAN)
         }
 
         val status = TextView(this).apply {
-            text = "Shaxsiy ovozli yordamchingiz"
-            textSize = 18f
+            text = "Gemini sun'iy intellekti bilan suhbat"
+            textSize = 16f
+            gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
         }
 
-        resultText = TextView(this).apply {
-            text = "Ovozli boshqaruvga tayyor"
-            textSize = 18f
-            setTextColor(Color.LTGRAY)
-            gravity = Gravity.CENTER
-            setPadding(10, 40, 10, 40)
+        chatText = TextView(this).apply {
+            text = "Assalomu alaykum! Men SENIORman. Menga savolingizni yozing."
+            textSize = 17f
+            setTextColor(Color.WHITE)
+            setPadding(12, 20, 12, 20)
         }
 
-        val button = Button(this).apply {
-            text = "🎤 GAPIRISH"
-            textSize = 18f
+        val scroll = ScrollView(this).apply {
+            addView(chatText)
+        }
+
+        input = EditText(this).apply {
+            hint = "Xabaringizni yozing..."
+            textSize = 17f
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.LTGRAY)
+            setPadding(16, 12, 16, 12)
+        }
+
+        sendButton = Button(this).apply {
+            text = "YUBORISH"
             setOnClickListener {
-                startListening()
+                sendMessage()
             }
         }
 
         layout.addView(title)
         layout.addView(status)
-        layout.addView(resultText)
-        layout.addView(button)
+
+        layout.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        layout.addView(input)
+        layout.addView(sendButton)
 
         setContentView(layout)
     }
 
-    private fun startListening() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(
-                arrayOf(Manifest.permission.RECORD_AUDIO), 100
-            )
+    private fun sendMessage() {
+        val message = input.text.toString().trim()
+
+        if (message.isEmpty()) {
+            Toast.makeText(this, "Xabar yozing", Toast.LENGTH_SHORT).show()
             return
         }
 
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            resultText.text = "Ovoz tanish xizmati mavjud emas"
-            return
-        }
+        input.setText("")
+        sendButton.isEnabled = false
 
-        recognizer?.destroy()
-        recognizer = SpeechRecognizer.createSpeechRecognizer(this)
+        chatText.append("\n\nSiz: $message\n\nSENIOR: Javob tayyorlanmoqda...")
+        
+        val oldHistory = JSONArray(history.toString())
 
-        recognizer?.setRecognitionListener(object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                resultText.text = "Eshityapman..."
-            }
+        executor.execute {
+            try {
+                val connection =
+                    URL(serverUrl).openConnection() as HttpURLConnection
 
-            override fun onResults(results: Bundle?) {
-                val words = results?.getStringArrayList(
-                    SpeechRecognizer.RESULTS_RECOGNITION
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 20000
+                connection.readTimeout = 60000
+                connection.doOutput = true
+                connection.setRequestProperty(
+                    "Content-Type",
+                    "application/json; charset=utf-8"
                 )
-                resultText.text = words?.firstOrNull()
-                    ?: "Tushunmadim"
+
+                val requestBody = JSONObject().apply {
+                    put("message", message)
+                    put("history", oldHistory)
+                }
+
+                OutputStreamWriter(
+                    connection.outputStream,
+                    Charsets.UTF_8
+                ).use {
+                    it.write(requestBody.toString())
+                }
+
+                val code = connection.responseCode
+
+                val stream = if (code in 200..299) {
+                    connection.inputStream
+                } else {
+                    connection.errorStream
+                }
+
+                val responseText = stream.bufferedReader().use {
+                    it.readText()
+                }
+
+                connection.disconnect()
+
+                val response = JSONObject(responseText)
+
+                if (code !in 200..299) {
+                    throw Exception(
+                        response.optString(
+                            "error",
+                            "Server xatoligi: $code"
+                        )
+                    )
+                }
+
+                val answer = response.optString("answer")
+
+                if (answer.isBlank()) {
+                    throw Exception("Gemini javobi bo'sh")
+                }
+
+                history.put(JSONObject().apply {
+                    put("role", "user")
+                    put("text", message)
+                })
+
+                history.put(JSONObject().apply {
+                    put("role", "model")
+                    put("text", answer)
+                })
+
+                runOnUiThread {
+                    chatText.append("\n\nSENIOR: $answer")
+                    sendButton.isEnabled = true
+                }
+
+            } catch (e: Exception) {
+                runOnUiThread {
+                    chatText.append(
+                        "\n\nXatolik: ${e.message}"
+                    )
+                    sendButton.isEnabled = true
+                }
             }
-
-            override fun onError(error: Int) {
-                resultText.text = "Xatolik bo'ldi. Qayta urinib ko'ring."
-            }
-
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "uz-UZ")
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "uz-UZ")
-        }
-
-        recognizer?.startListening(intent)
-    }
-
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<out String>,
-        grantResults: IntArray
-    ) {
-        super.onRequestPermissionsResult(
-            requestCode, permissions, grantResults
-        )
-
-        if (requestCode == 100 &&
-            grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startListening()
-        } else {
-            resultText.text = "Mikrofonga ruxsat berilmadi"
         }
     }
 
     override fun onDestroy() {
-        recognizer?.destroy()
+        executor.shutdown()
         super.onDestroy()
     }
 }
